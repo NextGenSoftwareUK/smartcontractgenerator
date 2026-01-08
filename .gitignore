@@ -1,0 +1,65 @@
+# Build results
+bin/
+obj/
+[Bb]uild/
+[Bb]uilds/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio cache/options directory
+.vs/
+
+# NuGet Packages
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Node modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test ledger (large binary files)
+test-ledger/
+*.bin
+*.sst
+*.log
+*.old.*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.cache
+
+# Logs
+*.log
+logs/
+
+# Environment files
+.env
+.env.local
+appsettings.Development.json
+appsettings.Production.json
+
+# Docker
+.dockerignore
