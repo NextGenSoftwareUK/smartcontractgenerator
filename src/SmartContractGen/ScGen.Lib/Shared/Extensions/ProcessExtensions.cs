@@ -242,6 +242,34 @@ public static class ProcessExtensions
         return await RunCommandAsync(cargo, command, logger, workingDirectory, cancellationToken, TimeSpan.FromMinutes(10));
     }
 
+    public static async Task<ProcessExecutionResult> RunCargoAsyncWithEnv(
+        string command,
+        string workingDirectory,
+        ILogger logger,
+        Dictionary<string, string> environmentVariables,
+        CancellationToken cancellationToken = default)
+    {
+        const string cargo = "cargo";
+
+        if (!Directory.Exists(workingDirectory))
+            return ProcessExecutionResult.Failure(
+                -1,
+                string.Empty,
+                Messages.WorkingDirectoryNotFound,
+                TimeSpan.Zero);
+
+        using Process process = new();
+        process.StartInfo = CreateProcessStartInfo(cargo, command, workingDirectory);
+        
+        // Add environment variables
+        foreach (var envVar in environmentVariables)
+        {
+            process.StartInfo.Environment[envVar.Key] = envVar.Value;
+        }
+
+        return await process.ExecuteAsync(logger, cancellationToken, TimeSpan.FromMinutes(10));
+    }
+
 
     public static async Task<ProcessExecutionResult> RunAnchorAsync(
         string workingDirectory,
@@ -249,6 +277,9 @@ public static class ProcessExtensions
         CancellationToken cancellationToken = default)
     {
         const string anchor = "anchor";
+        // Note: --locked flag is not supported by cargo-build-sbf (used by Anchor)
+        // Instead, we rely on comprehensive Cargo.lock fixes in Step 5 before anchor build
+        // These fixes remove constant_time_eq 0.4.2 and fix all references
         const string arguments = " build";
         if (!Directory.Exists(workingDirectory))
             return ProcessExecutionResult.Failure(
@@ -257,12 +288,127 @@ public static class ProcessExtensions
                 Messages.WorkingDirectoryNotFound,
                 TimeSpan.Zero);
 
-        // Use default cargo cache (~/.cargo) to avoid corruption issues
-        // The temp cargo_cache was causing "Inflector v0.11.4" download failures
+        // Use isolated CARGO_HOME per compilation (similar to OASIS's versioned dependency paths)
+        // This prevents dependency conflicts between different compilations
+        string isolatedCargoHome = Path.Combine(workingDirectory, ".cargo_home");
+        Directory.CreateDirectory(isolatedCargoHome);
         
         using Process process = new();
         process.StartInfo = CreateProcessStartInfo(anchor, arguments, workingDirectory);
-        // Don't override CARGO_HOME - use system default
+        // Use isolated CARGO_HOME to prevent cross-contamination
+        process.StartInfo.Environment["CARGO_HOME"] = isolatedCargoHome;
+        logger.LogInformation("Using isolated CARGO_HOME: {CargoHome}", isolatedCargoHome);
+        
+        // Ensure Solana CLI tools are in PATH for cargo-build-sbf
+        // Try Agave path first (newer), then fall back to old solana-install path
+        string solanaBinPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".local", "share", "solana", "install", "active_release", "bin");
+        
+        // Also check for platform-tools SDK and create symlink if needed
+        string platformToolsPath = Path.Combine(solanaBinPath, "..", "platform-tools");
+        string cargoBinPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".cargo", "bin");
+        string platformToolsSymlink = Path.Combine(cargoBinPath, "platform-tools-sdk");
+        
+        // Create symlink for platform-tools if it doesn't exist and platform-tools directory exists
+        if (Directory.Exists(platformToolsPath) && !Directory.Exists(platformToolsSymlink))
+        {
+            try
+            {
+                Directory.CreateDirectory(cargoBinPath);
+                // Create symlink (Unix/Mac) or junction (Windows)
+                if (Environment.OSVersion.Platform == PlatformID.Unix || 
+                    Environment.OSVersion.Platform == PlatformID.MacOSX)
+                {
+                    var symlinkProcess = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "ln",
+                        Arguments = $"-s \"{platformToolsPath}\" \"{platformToolsSymlink}\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    });
+                    symlinkProcess?.WaitForExit(1000);
+                    logger.LogInformation("Created symlink for platform-tools-sdk: {Symlink} -> {Target}", platformToolsSymlink, platformToolsPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Could not create platform-tools-sdk symlink: {Error}", ex.Message);
+            }
+        }
+        
+        // Add cargo wrapper to PATH (if it exists) to handle Cargo.lock version 4
+        string cargoWrapperPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            ".cargo", "bin");
+        
+        // Check for local cargo wrapper in temp directory (fixes constant_time_eq 0.4.2)
+        string localCargoWrapperDir = Path.Combine(workingDirectory, ".cargo_wrapper");
+        string localCargoWrapper = Path.Combine(localCargoWrapperDir, "cargo");
+        
+        string currentPath = process.StartInfo.Environment["PATH"] ?? string.Empty;
+        var pathParts = currentPath.Split(':', StringSplitOptions.RemoveEmptyEntries).ToList();
+        
+        // CRITICAL: Put local cargo wrapper FIRST (highest priority) - it fixes constant_time_eq 0.4.2
+        if (File.Exists(localCargoWrapper))
+        {
+            pathParts.RemoveAll(p => p == localCargoWrapperDir);
+            pathParts.Insert(0, localCargoWrapperDir);
+            logger.LogInformation("Prioritized local cargo wrapper in PATH (fixes constant_time_eq 0.4.2): {WrapperDir}", localCargoWrapperDir);
+        }
+        // Then stable cargo (if local wrapper doesn't exist)
+        else if (Directory.Exists(cargoWrapperPath))
+        {
+            // Remove any existing cargo path entries
+            pathParts.RemoveAll(p => p.Contains(".cargo/bin"));
+            // Add stable cargo FIRST (highest priority)
+            pathParts.Insert(0, cargoWrapperPath);
+            logger.LogInformation("Prioritized stable cargo in PATH: {CargoWrapperPath}", cargoWrapperPath);
+        }
+        
+        // Add Solana CLI tools AFTER stable cargo (lower priority)
+        // This way stable cargo is found first, but Solana tools are still available
+        if (Directory.Exists(solanaBinPath))
+        {
+            // Remove Solana bin if already present
+            pathParts.RemoveAll(p => p == solanaBinPath);
+            // Add Solana tools AFTER stable cargo
+            pathParts.Add(solanaBinPath);
+            logger.LogInformation("Added Solana CLI to PATH (after stable cargo): {SolanaBinPath}", solanaBinPath);
+        }
+        else
+        {
+            logger.LogWarning("Solana CLI bin directory not found at: {SolanaBinPath}", solanaBinPath);
+        }
+        
+        process.StartInfo.Environment["PATH"] = string.Join(":", pathParts);
+        
+        // Force Anchor to use stable Rust toolchain instead of Solana toolchain
+        // This ensures we use Cargo 1.92.0 instead of 1.75.0 from Solana toolchain
+        // Set RUSTUP_TOOLCHAIN to force stable toolchain
+        process.StartInfo.Environment["RUSTUP_TOOLCHAIN"] = "stable";
+        logger.LogInformation("Set RUSTUP_TOOLCHAIN=stable to force stable Rust toolchain (Cargo 1.92.0)");
+        
+        // CRITICAL: Set CARGO to use our wrapper if it exists (fixes constant_time_eq 0.4.2)
+        // This ensures cargo calls go through our wrapper even if CARGO env var is checked
+        if (File.Exists(localCargoWrapper))
+        {
+            process.StartInfo.Environment["CARGO"] = localCargoWrapper;
+            logger.LogInformation("Set CARGO={WrapperPath} to use cargo wrapper (fixes constant_time_eq 0.4.2)", localCargoWrapper);
+        }
+        // Otherwise, set CARGO to explicitly use stable cargo if available
+        else
+        {
+            string homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string stableCargoPath = Path.Combine(homeDir, ".cargo", "bin", "cargo");
+            if (File.Exists(stableCargoPath))
+            {
+                process.StartInfo.Environment["CARGO"] = stableCargoPath;
+                logger.LogInformation("Set CARGO={CargoPath} to use stable cargo", stableCargoPath);
+            }
+        }
         
         // Use sccache if available for shared compilation cache
         string sccachePath = FindSccache();
