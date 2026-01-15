@@ -181,8 +181,20 @@ public sealed partial class SolanaContractDeploy
             logger.LogInformation($"Program size: {programFileInfo.Length} bytes");
 
             // Use our working Node.js deployment script using @solana/web3.js (bypasses broken Solana CLI)
-            // Try /tmp first (for local development), then fall back to original path
-            string deployScriptPath = "/tmp/web3_deploy_complete.js";
+            // Try multiple locations: repo path, /tmp, and fallback paths
+            string deployScriptPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "ScGen.Lib", "Shared", "Services", "Solana", "web3_deploy_complete.js");
+            deployScriptPath = Path.GetFullPath(deployScriptPath);
+            
+            if (!System.IO.File.Exists(deployScriptPath))
+            {
+                deployScriptPath = "/tmp/web3_deploy_complete.js";
+            }
+            
+            if (!System.IO.File.Exists(deployScriptPath))
+            {
+                deployScriptPath = Path.Combine(workingDirectory, "..", "..", "..", "ScGen.Lib", "Shared", "Services", "Solana", "web3_deploy_complete.js");
+                deployScriptPath = Path.GetFullPath(deployScriptPath);
+            }
             
             if (!System.IO.File.Exists(deployScriptPath))
             {
