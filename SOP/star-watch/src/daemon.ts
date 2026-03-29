@@ -6,6 +6,8 @@ import { startSlackWatcher } from './watchers/slack'
 import { startSalesforceWatcher } from './watchers/salesforce'
 import { initSlackDelivery, sendSignOffRequest, sendAutoCompleteNotice } from './delivery/slack'
 import { log } from './logger'
+import { recordEvent, recordMatch, resetStartedAt } from './event-store'
+import { startApiServer } from './api-server'
 
 // ─── Daemon: the main loop ────────────────────────────────────────────────
 // Starts all configured watchers, maintains the active run cache,
@@ -28,12 +30,19 @@ export async function startDaemon(options: { verbose?: boolean } = {}): Promise<
     await refreshRunCache()
   }, RUN_CACHE_TTL_MS)
 
+  // Start local HTTP API so SOP app can display live activity
+  resetStartedAt()
+  startApiServer()
+
   // Initialise delivery adapters
   await initSlackDelivery()
 
   // Build event handler — wrapped so one bad event never crashes the daemon
   const handleEvent = async (event: ObservedEvent) => {
     try {
+    // Always record to the event store so the SOP app can display it
+    recordEvent(event)
+
     if (options.verbose) {
       log.event(event.source, event.action, event.actor.name)
     }
@@ -41,6 +50,7 @@ export async function startDaemon(options: { verbose?: boolean } = {}): Promise<
     const match = await matchEvent(event, activeRuns)
     if (!match) return
 
+    recordMatch(match)
     log.match(match.step.name, match.confidence, match.action)
 
     switch (match.action) {

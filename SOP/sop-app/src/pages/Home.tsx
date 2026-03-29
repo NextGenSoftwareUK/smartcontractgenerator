@@ -1,13 +1,51 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Sun } from 'lucide-react'
 import {
   ClipboardText, ChartLineUp, MagicWand,
   Pulse, ChartBar, Sparkle,
-  CheckCircle, Warning, Clock, Lock, Play, CaretRight
+  CheckCircle, Warning, Clock, Lock, Play, CaretRight,
+  Lightning, Circle, ArrowRight
 } from '@phosphor-icons/react'
 import { listMyWorkflows, listPublicWorkflows, authenticate, getToken, type WorkflowDefinition } from '../api/client'
 import { Badge } from '../components/Badge'
+
+// ── STAR Watch local API ────────────────────────────────────────────────
+const SW_API = 'http://localhost:3001'
+
+interface SwEvent {
+  id: string; timestamp: string; source: string
+  action: string; actor: string; entity: string; context: string
+}
+interface SwMatch {
+  id: string; timestamp: string; source: string
+  action: string; actor: string; stepName: string
+  sopName: string; confidence: number; matchAction: string
+}
+interface SwStatus {
+  startedAt: string; eventCount: number; matchCount: number
+  connectors: string[]; lastEventAt: string | null
+}
+
+function sourceColor(src: string) {
+  if (src === 'salesforce') return '#00A1E0'
+  if (src === 'slack')      return '#4A154B'
+  return '#2DD4BF'
+}
+function sourceLabel(src: string) {
+  if (src === 'salesforce') return 'SF'
+  if (src === 'slack')      return 'SL'
+  return src.slice(0, 2).toUpperCase()
+}
+function actionLabel(action: string) {
+  return action.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+}
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime()
+  if (diff < 60_000)  return `${Math.round(diff / 1000)}s ago`
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`
+  return `${Math.round(diff / 3_600_000)}h ago`
+}
 
 const RECENT_RUNS = [
   { id: 'run-1', sop: 'Enterprise Onboarding v3',     step: 'Go-live sign-off',      status: 'running',   avatar: 'Kelly A.',  elapsed: '2h 14m' },
@@ -42,6 +80,34 @@ export function Home() {
   const [authed, setAuthed] = useState(!!getToken())
   const [form, setForm] = useState({ username: '', password: '' })
   const [loginError, setLoginError] = useState('')
+
+  // ── STAR Watch live feed ──────────────────────────────────────────────
+  const [swEvents,  setSwEvents]  = useState<SwEvent[]>([])
+  const [swMatches, setSwMatches] = useState<SwMatch[]>([])
+  const [swStatus,  setSwStatus]  = useState<SwStatus | null>(null)
+  const [swOnline,  setSwOnline]  = useState(false)
+  const swTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    async function poll() {
+      try {
+        const [evts, mts, sts] = await Promise.all([
+          fetch(`${SW_API}/events?limit=12`).then(r => r.json()),
+          fetch(`${SW_API}/matches?limit=6`).then(r => r.json()),
+          fetch(`${SW_API}/status`).then(r => r.json()),
+        ])
+        setSwEvents(evts)
+        setSwMatches(mts)
+        setSwStatus(sts)
+        setSwOnline(true)
+      } catch {
+        setSwOnline(false)
+      }
+    }
+    poll()
+    swTimer.current = setInterval(poll, 5000)
+    return () => { if (swTimer.current) clearInterval(swTimer.current) }
+  }, [])
 
   useEffect(() => {
     if (authed) {
@@ -261,6 +327,93 @@ export function Home() {
           )}
         </div>
       </div>
+
+      {/* ── STAR Watch Live Feed ───────────────────────────────────────── */}
+      <div className="fade-up fade-up-4" style={{ marginTop: 40 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(45,212,191,0.08)', border: '1px solid rgba(45,212,191,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Lightning size={14} weight="fill" color="#2DD4BF" />
+            </div>
+            <h2 style={{ fontFamily: 'var(--font-sans)', fontWeight: 600, fontSize: '1rem', color: '#C4C4C4', letterSpacing: '-0.01em' }}>
+              STAR Watch — Live Activity
+            </h2>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: swOnline ? '#2DD4BF' : '#525252' }}>
+            <Circle size={7} weight="fill" color={swOnline ? '#2DD4BF' : '#404040'} />
+            {swOnline
+              ? `${swStatus?.connectors?.join(' + ') ?? 'connected'} · ${swStatus?.eventCount ?? 0} events`
+              : 'star-watch not running'}
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 16 }}>
+
+          {/* Event stream */}
+          <div className="panel-card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 18px', borderBottom: '0.5px solid rgba(255,255,255,0.06)', fontSize: '0.78rem', fontWeight: 600, color: '#525252', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              Detected Events
+            </div>
+            {!swOnline ? (
+              <div style={{ padding: '32px 20px', textAlign: 'center', color: '#404040', fontSize: '0.85rem' }}>
+                <Pulse size={28} style={{ marginBottom: 10, opacity: 0.3 }} />
+                <div>Run <code style={{ fontSize: '0.82rem', color: '#686868', background: 'rgba(255,255,255,0.04)', padding: '2px 6px', borderRadius: 4 }}>npm run watch</code> in <code style={{ fontSize: '0.82rem', color: '#686868', background: 'rgba(255,255,255,0.04)', padding: '2px 6px', borderRadius: 4 }}>SOP/star-watch</code> to connect</div>
+              </div>
+            ) : swEvents.length === 0 ? (
+              <div style={{ padding: '32px 20px', textAlign: 'center', color: '#404040', fontSize: '0.85rem' }}>
+                Listening for events from {swStatus?.connectors?.join(', ') ?? 'connectors'}…
+              </div>
+            ) : swEvents.map((ev, i) => (
+              <div key={ev.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 18px', borderBottom: i < swEvents.length - 1 ? '0.5px solid rgba(255,255,255,0.04)' : 'none' }}>
+                {/* Source badge */}
+                <div style={{ width: 30, height: 30, borderRadius: 7, background: `${sourceColor(ev.source)}18`, border: `0.5px solid ${sourceColor(ev.source)}40`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '0.58rem', fontWeight: 800, color: sourceColor(ev.source), letterSpacing: '0.02em' }}>
+                  {sourceLabel(ev.source)}
+                </div>
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div style={{ fontSize: '0.875rem', fontWeight: 500, color: '#C4C4C4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {ev.entity}
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: '#525252', marginTop: 1 }}>
+                    {actionLabel(ev.action)} · {ev.actor}
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.72rem', color: '#404040', flexShrink: 0 }}>{timeAgo(ev.timestamp)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Matched steps */}
+          <div className="panel-card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '12px 18px', borderBottom: '0.5px solid rgba(255,255,255,0.06)', fontSize: '0.78rem', fontWeight: 600, color: '#525252', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+              SOP Matches
+            </div>
+            {!swOnline || swMatches.length === 0 ? (
+              <div style={{ padding: '32px 16px', textAlign: 'center', color: '#404040', fontSize: '0.82rem' }}>
+                {swOnline ? 'No matches yet — events will auto-match to SOP steps' : '—'}
+              </div>
+            ) : swMatches.map((m, i) => (
+              <div key={m.id} style={{ padding: '12px 16px', borderBottom: i < swMatches.length - 1 ? '0.5px solid rgba(255,255,255,0.04)' : 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 5, background: `${sourceColor(m.source)}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.52rem', fontWeight: 800, color: sourceColor(m.source), flexShrink: 0 }}>
+                    {sourceLabel(m.source)}
+                  </div>
+                  <ArrowRight size={10} color="#404040" />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#C4C4C4', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.stepName}</span>
+                </div>
+                <div style={{ fontSize: '0.75rem', color: '#525252', marginBottom: 4 }}>{m.sopName}</div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.7rem', color: m.matchAction === 'auto_complete' ? '#2DD4BF' : '#F59E0B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    {m.matchAction === 'auto_complete' ? 'Auto-completed' : 'Escalated'}
+                  </span>
+                  <span style={{ fontSize: '0.7rem', color: '#404040' }}>{Math.round(m.confidence * 100)}% match · {timeAgo(m.timestamp)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+        </div>
+      </div>
+
     </div>
   )
 }
