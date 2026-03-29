@@ -5,19 +5,22 @@ import type { ObservedEvent } from '../types'
 
 // ─── Salesforce Watcher ───────────────────────────────────────────────────
 //
-// Authenticates with username + password + security token (no Connected App
-// required for this flow).  Subscribes to the Salesforce Streaming API via
-// CometD (jsforce handles the Bayeux handshake) for each configured object.
-// Falls back to REST polling if streaming cannot be established.
+// Auth priority:
+//   1. accessToken (from `sf org login web` via Salesforce CLI) — preferred
+//   2. username + password + securityToken (SOAP login) — fallback
+//
+// Subscribes to the Salesforce Streaming API via CometD for each configured
+// object. Falls back to REST polling if streaming cannot be established.
 
 type EventCallback = (event: ObservedEvent) => void
 
 interface SFConfig {
   instanceUrl:   string
   username:      string
-  password:      string       // Salesforce login password
-  securityToken: string       // Appended to password for API auth
-  objects:       string[]     // e.g. ['Opportunity', 'Lead', 'Case', 'Task']
+  accessToken?:  string       // Set by `sf org login web` — preferred auth
+  password?:     string       // Salesforce login password (SOAP fallback)
+  securityToken?: string      // Appended to password for SOAP auth
+  objects:       string[]
 }
 
 const POLL_INTERVAL_MS  = 15_000
@@ -34,28 +37,33 @@ export async function startSalesforceWatcher(emit: EventCallback): Promise<void>
     return
   }
 
-  if (sfConfig.password === '__NEEDS_SF_PASSWORD__' || !sfConfig.password) {
-    log.warn('Salesforce password not yet set in ~/.star/config.json — skipping Salesforce watcher.')
-    return
-  }
-
   const sf: SFConfig = {
     instanceUrl:   sfConfig.instanceUrl,
     username:      sfConfig.username,
-    password:      sfConfig.password,
-    securityToken: sfConfig.securityToken ?? '',
-    objects:       sfConfig.objects ?? ['Opportunity', 'Case'],
+    accessToken:   sfConfig.accessToken as string | undefined,
+    password:      sfConfig.password as string | undefined,
+    securityToken: sfConfig.securityToken as string | undefined ?? '',
+    objects:       (sfConfig.objects as string[] | undefined) ?? ['Opportunity', 'Case'],
   }
 
   log.info(`Salesforce watcher authenticating as ${sf.username}…`)
 
   try {
-    const conn = new Connection({ loginUrl: sf.instanceUrl })
+    let conn: Connection
 
-    // jsforce requires password + securityToken concatenated
-    await conn.login(sf.username, sf.password + sf.securityToken)
-
-    log.success(`Salesforce connected (${sf.instanceUrl})`)
+    if (sf.accessToken) {
+      // ── OAuth token from `sf org login web` — no SOAP needed ──────────
+      conn = new Connection({ instanceUrl: sf.instanceUrl, accessToken: sf.accessToken })
+      log.success(`Salesforce connected via OAuth token (${sf.instanceUrl})`)
+    } else if (sf.password && sf.password !== '__NEEDS_SF_PASSWORD__') {
+      // ── SOAP username+password fallback ───────────────────────────────
+      conn = new Connection({ loginUrl: sf.instanceUrl })
+      await conn.login(sf.username, sf.password + (sf.securityToken ?? ''))
+      log.success(`Salesforce connected via SOAP login (${sf.instanceUrl})`)
+    } else {
+      log.warn('Salesforce: no accessToken or password configured — skipping.')
+      return
+    }
     log.info(`Watching objects: ${sf.objects.join(', ')}`)
 
     // Try Streaming API first — real-time CometD subscriptions
@@ -81,19 +89,19 @@ async function tryStreaming(
 ): Promise<boolean> {
   try {
     for (const objectType of sf.objects) {
-      const topicName = `OASISStarWatch_${objectType}`
+      const topic = topicName(objectType)
 
       // Ensure the PushTopic exists — create it if not
-      await ensurePushTopic(conn, topicName, objectType)
+      await ensurePushTopic(conn, topic, objectType)
 
       // Subscribe to the streaming channel
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      conn.streaming.topic(topicName).subscribe((message: any) => {
+      conn.streaming.topic(topic).subscribe((message: any) => {
         const event = normaliseSFStreamEvent(message as SFStreamMessage, objectType, sf.instanceUrl)
         if (event) emit(event)
       })
 
-      log.success(`Subscribed to Salesforce streaming: /topic/${topicName}`)
+      log.success(`Subscribed to Salesforce streaming: /topic/${topic}`)
     }
     return true
   } catch (err) {
@@ -104,18 +112,18 @@ async function tryStreaming(
 
 async function ensurePushTopic(
   conn:       Connection,
-  topicName:  string,
+  topic:      string,
   objectType: string,
 ): Promise<void> {
   try {
     const existing = await conn.query<{ Id: string }>(
-      `SELECT Id FROM PushTopic WHERE Name = '${topicName}' LIMIT 1`
+      `SELECT Id FROM PushTopic WHERE Name = '${topic}' LIMIT 1`
     )
     if (existing.totalSize > 0) return
 
-    const fields    = buildSOQLFields(objectType)
+      const fields    = buildSOQLFields(objectType)
     const pushTopic = {
-      Name:                  topicName,
+      Name:                  topic,
       Query:                 `SELECT ${fields} FROM ${objectType}`,
       ApiVersion:            60.0,
       NotifyForOperationCreate:  true,
@@ -125,10 +133,10 @@ async function ensurePushTopic(
     }
 
     await conn.sobject('PushTopic').create(pushTopic as Record<string, unknown>)
-    log.info(`Created Salesforce PushTopic: ${topicName}`)
+    log.info(`Created Salesforce PushTopic: ${topic}`)
   } catch (err) {
     // PushTopic creation requires admin permissions — log and continue
-    log.warn(`Could not create PushTopic ${topicName}: ${err}`)
+    log.warn(`Could not create PushTopic ${topic}: ${err}`)
   }
 }
 
@@ -170,14 +178,26 @@ function startPolling(
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
+// Salesforce PushTopic names are max 25 chars
+function topicName(objectType: string): string {
+  const map: Record<string, string> = {
+    Opportunity: 'STARWatch_Oppty',
+    Lead:        'STARWatch_Lead',
+    Case:        'STARWatch_Case',
+    Task:        'STARWatch_Task',
+  }
+  return map[objectType] ?? `STARWatch_${objectType}`.slice(0, 25)
+}
+
 function buildSOQLFields(objectType: string): string {
-  const base = 'Id, Name, LastModifiedDate, LastModifiedById, OwnerId'
-  const extra =
-    objectType === 'Opportunity' ? ', StageName, Amount, CloseDate, AccountId' :
-    objectType === 'Case'        ? ', Status, Priority, Subject, AccountId' :
-    objectType === 'Lead'        ? ', Status, Company, Email' :
-    objectType === 'Task'        ? ', Status, Subject, ActivityDate' : ''
-  return base + extra
+  // Case and Task don't have a 'Name' field — use object-specific fields
+  switch (objectType) {
+    case 'Opportunity': return 'Id, Name, StageName, Amount, CloseDate, AccountId, LastModifiedDate, LastModifiedById, OwnerId'
+    case 'Case':        return 'Id, Subject, Status, Priority, AccountId, LastModifiedDate, LastModifiedById, OwnerId'
+    case 'Lead':        return 'Id, Name, Status, Company, Email, LastModifiedDate, LastModifiedById, OwnerId'
+    case 'Task':        return 'Id, Subject, Status, ActivityDate, LastModifiedDate, LastModifiedById, OwnerId'
+    default:            return 'Id, Name, LastModifiedDate, LastModifiedById, OwnerId'
+  }
 }
 
 // ─── Event normalisation ──────────────────────────────────────────────────
@@ -222,7 +242,8 @@ function normaliseSFRecord(
   objectType:  string,
   instanceUrl: string,
 ): ObservedEvent {
-  const contextParts: string[] = [`${objectType} "${record.Name ?? record.Id}" was modified`]
+  const displayName = record.Name ?? record.Subject ?? record.Id
+  const contextParts: string[] = [`${objectType} "${displayName}" was modified`]
   if (record.StageName) contextParts.push(`Stage: ${record.StageName}`)
   if (record.Status)    contextParts.push(`Status: ${record.Status}`)
   if (record.Priority)  contextParts.push(`Priority: ${record.Priority}`)
@@ -240,7 +261,7 @@ function normaliseSFRecord(
     entity: {
       type: objectType.toLowerCase(),
       id:   record.Id,
-      name: record.Name,
+      name: record.Name ?? record.Subject,
       url:  `${instanceUrl}/lightning/r/${objectType}/${record.Id}/view`,
     },
     payload: record as unknown as Record<string, unknown>,
