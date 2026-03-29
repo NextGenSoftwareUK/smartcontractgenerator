@@ -251,6 +251,11 @@ TOGETHER WE CAN CREATE A BETTER WORLD...</b></b>
             services.AddSingleton<WorkflowProofGenerator>();
             services.AddSingleton<IWorkflowEngine, WorkflowEngine>();
 
+            // STAR Watch — live run state management + BRAID controller
+            services.AddSingleton<NextGenSoftware.OASIS.API.ONODE.WebAPI.Interfaces.IWorkflowRunStore,
+                                  NextGenSoftware.OASIS.API.ONODE.WebAPI.Services.WorkflowRunStore>();
+            services.AddHttpClient("BraidController");
+
             // GitHub OAuth (link GitHub account to OASIS avatar)
             services.AddMemoryCache();
             services.Configure<NextGenSoftware.OASIS.API.ONODE.WebAPI.Models.Security.GitHubOAuthOptions>(Configuration.GetSection(NextGenSoftware.OASIS.API.ONODE.WebAPI.Models.Security.GitHubOAuthOptions.SectionName));
