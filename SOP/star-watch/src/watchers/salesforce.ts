@@ -23,7 +23,7 @@ interface SFConfig {
   objects:       string[]
 }
 
-const POLL_INTERVAL_MS  = 15_000
+const POLL_INTERVAL_MS  = 8_000
 const SF_API_VERSION    = 'v60.0'
 
 // ─── Entry point ─────────────────────────────────────────────────────────
@@ -66,14 +66,10 @@ export async function startSalesforceWatcher(emit: EventCallback): Promise<void>
     }
     log.info(`Watching objects: ${sf.objects.join(', ')}`)
 
-    // Try Streaming API first — real-time CometD subscriptions
-    const streamingOk = await tryStreaming(conn, sf, emit)
-
-    // Fall back to polling if streaming setup fails
-    if (!streamingOk) {
-      log.warn('Streaming API unavailable — falling back to polling every 15s')
-      startPolling(conn, sf, emit)
-    }
+    // Use polling for reliable event detection (works in all environments).
+    // Streaming API (CometD) will be enabled as an opt-in once we confirm
+    // the CometD keep-alive works reliably in the daemon runtime.
+    startPolling(conn, sf, emit)
   } catch (err) {
     log.error(`Salesforce auth failed: ${err}`)
     log.warn('Check your password + security token in ~/.star/config.json')
