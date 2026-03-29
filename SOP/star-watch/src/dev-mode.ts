@@ -60,8 +60,10 @@ const MOCK_RUN: ActiveRun = {
   sopName: 'Enterprise Customer Onboarding v3',
   currentStepIndex: 0,
   steps: DEMO_STEPS,
+  sopVersion: '1.0.0',
   assignees: { s2: 'Udev-engineer', s4: 'Udev-admin' },
-  startedAt: new Date().toISOString(),
+  startedAt: new Date(),
+  lastUpdatedAt: new Date(),
 }
 
 // ── Synthetic event stream ───────────────────────────────────────────────

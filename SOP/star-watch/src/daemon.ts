@@ -170,7 +170,9 @@ const DEMO_RUN: import('./types').ActiveRun = {
   currentStepIndex: 0,
   steps: DEMO_SOP_STEPS,
   assignees: {},
-  startedAt: new Date().toISOString(),
+  sopVersion: '1.0.0',
+  startedAt: new Date(),
+  lastUpdatedAt: new Date(),
 }
 
 // ─── Assignee resolution ──────────────────────────────────────────────────
