@@ -27,6 +27,10 @@ import {
 
 const ENDPOINT = process.env.NEXT_PUBLIC_MEDUSA_BACKEND_API ?? 'http://localhost:9000';
 const MEDUSA_API_KEY = process.env.MEDUSA_API_KEY ?? '';
+// Default region used for price calculation. Sourced from env or falls back to the
+// Europe/EUR region that ships with the Medusa seed data.
+const MEDUSA_REGION_ID =
+  process.env.MEDUSA_REGION_ID ?? 'reg_01KGSXMVE5N2YEJTPFA6MR2GVC';
 
 export default async function medusaRequest({
   cache = 'force-cache',
@@ -198,16 +202,25 @@ const reshapeProduct = (product: MedusaProduct): Product => {
   const variant = product.variants?.[0];
 
   let amount = '0';
-  let currencyCode = 'USD';
-  if (variant && variant.prices?.[0]?.amount) {
-    currencyCode = variant.prices?.[0]?.currency_code.toUpperCase() ?? 'USD';
-    amount = convertToDecimal(variant.prices[0].amount, currencyCode).toString();
+  let currencyCode = 'EUR';
+
+  if (variant) {
+    // Medusa v2 returns calculated_price when region_id is passed (preferred)
+    const calc = (variant as any).calculated_price;
+    if (calc?.calculated_amount != null && calc.currency_code) {
+      currencyCode = calc.currency_code.toUpperCase();
+      amount = convertToDecimal(calc.calculated_amount, currencyCode).toString();
+    } else if (variant.prices?.[0]?.amount) {
+      // Fallback: raw prices array (returned without region_id)
+      currencyCode = variant.prices[0].currency_code.toUpperCase();
+      amount = convertToDecimal(variant.prices[0].amount, currencyCode).toString();
+    }
   }
 
   const priceRange = {
     maxVariantPrice: {
       amount,
-      currencyCode: product.variants?.[0]?.prices?.[0]?.currency_code.toUpperCase() ?? ''
+      currencyCode
     }
   };
 
@@ -418,7 +431,7 @@ export async function getCategoryProducts(
 export async function getProduct(handle: string): Promise<Product> {
   const res = await medusaRequest({
     method: 'GET',
-    path: `/products?handle=${handle}&limit=1`,
+    path: `/products?handle=${handle}&limit=1&region_id=${MEDUSA_REGION_ID}`,
     tags: ['products']
   });
   const product = res.body.products[0];
@@ -439,20 +452,26 @@ export async function getProducts({
   try {
     let res;
 
+    const regionParam = `region_id=${MEDUSA_REGION_ID}`;
+
     if (query) {
       res = await medusaRequest({
         method: 'GET',
-        path: `/products?q=${query}&limit=100`,
+        path: `/products?q=${query}&limit=100&${regionParam}`,
         tags: ['products']
       });
     } else if (categoryId) {
       res = await medusaRequest({
         method: 'GET',
-        path: `/products?category_id[]=${categoryId}&limit=100`,
+        path: `/products?category_id[]=${categoryId}&limit=100&${regionParam}`,
         tags: ['products']
       });
     } else {
-      res = await medusaRequest({ method: 'GET', path: `/products?limit=100`, tags: ['products'] });
+      res = await medusaRequest({
+        method: 'GET',
+        path: `/products?limit=100&${regionParam}`,
+        tags: ['products']
+      });
     }
 
     if (!res) {
