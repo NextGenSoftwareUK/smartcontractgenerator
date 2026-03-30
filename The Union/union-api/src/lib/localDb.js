@@ -28,9 +28,9 @@ async function getDb() {
   return db;
 }
 
-async function linkFingerprint({ fingerprintId, avatarId, name, chapter = 'PDC' }) {
+async function linkFingerprint({ fingerprintId, avatarId, name, phone, chapter = 'PDC' }) {
   const db = await getDb();
-  db.data.members[fingerprintId] = { avatarId, name, chapter };
+  db.data.members[fingerprintId] = { avatarId, name, phone: phone ?? null, chapter };
   await db.write();
 }
 

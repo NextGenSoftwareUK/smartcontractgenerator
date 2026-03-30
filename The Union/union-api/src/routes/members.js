@@ -14,7 +14,7 @@ const { linkFingerprint, getMemberByFingerprint, getAllMembers } = require('../l
 // Register a new member — creates their OASIS avatar + stores fingerprint link
 router.post('/register', async (req, res, next) => {
   try {
-    const { fingerprintId, username, email, password, firstName, lastName, chapter = 'PDC' } = req.body;
+    const { fingerprintId, username, email, password, firstName, lastName, phone, chapter = 'PDC' } = req.body;
 
     if (!username || !email || !password) {
       return res.status(400).json({ error: 'username, email, password required' });
@@ -29,6 +29,7 @@ router.post('/register', async (req, res, next) => {
         fingerprintId,
         avatarId: avatar.id ?? avatar.avatarId,
         name: `${firstName ?? ''} ${lastName ?? ''}`.trim() || username,
+        phone: phone ?? null,
         chapter
       });
     }
@@ -44,11 +45,11 @@ router.post('/register', async (req, res, next) => {
 // Link a fingerprintId to an existing OASIS avatar
 router.post('/link', async (req, res, next) => {
   try {
-    const { fingerprintId, avatarId, name, chapter = 'PDC' } = req.body;
+    const { fingerprintId, avatarId, name, phone, chapter = 'PDC' } = req.body;
     if (!fingerprintId || !avatarId) {
       return res.status(400).json({ error: 'fingerprintId and avatarId required' });
     }
-    await linkFingerprint({ fingerprintId, avatarId, name: name ?? avatarId, chapter });
+    await linkFingerprint({ fingerprintId, avatarId, name: name ?? avatarId, phone: phone ?? null, chapter });
     res.json({ message: 'Fingerprint linked', fingerprintId, avatarId });
   } catch (err) { next(err); }
 });

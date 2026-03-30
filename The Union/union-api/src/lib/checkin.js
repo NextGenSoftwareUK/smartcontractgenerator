@@ -34,6 +34,7 @@ async function processCheckin({ fingerprintId, avatarId: directAvatarId, chapter
   // 1. Resolve member
   let avatarId = directAvatarId;
   let memberName = 'Member';
+  let memberPhone = null;
 
   if (!avatarId && fingerprintId) {
     const member = await getMemberByFingerprint(fingerprintId);
@@ -42,6 +43,7 @@ async function processCheckin({ fingerprintId, avatarId: directAvatarId, chapter
     }
     avatarId = member.avatarId;
     memberName = member.name;
+    memberPhone = member.phone ?? null;
     chapter = member.chapter ?? chapter;
   }
 
@@ -117,14 +119,18 @@ async function processCheckin({ fingerprintId, avatarId: directAvatarId, chapter
     console.warn('[checkin] karma check failed:', err.message);
   }
 
-  // 6. Notify
+  // 6. Notify via WhatsApp
   try {
+    const karmaStats = karmaResult ?? {};
     await sendNotification({
-      avatarId,
       memberName,
+      phone: memberPhone,
       chapter,
-      completedQuests,
-      karmaResult
+      karmaEarned: SESSION_TOKENS,
+      karmaTotal: karmaStats?.karma ?? SESSION_TOKENS,
+      totalSessions: member?.totalSessions ?? 1,
+      completedQuests: completedQuests.map(q => q.sessions + ' Sessions'),
+      tier: 'recruit'
     });
   } catch (err) {
     console.warn('[checkin] notification failed:', err.message);
