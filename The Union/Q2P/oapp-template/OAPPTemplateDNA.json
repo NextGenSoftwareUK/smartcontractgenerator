@@ -1,0 +1,15 @@
+{
+  "Id": "00000000-0000-0000-0000-000000000001",
+  "Name": "Q2P Shop",
+  "Description": "Quest-to-Physical virtual shop template. Etsy-style storefront with Medusa backend, Stripe payments, and OASIS quest proof integration.",
+  "Version": "1.0.0",
+  "VersionSequence": 1,
+  "STARNETCategory": "WebBlazor",
+  "SourcePath": "",
+  "PublishedPath": "",
+  "MetaData": {
+    "templateType": "q2p-shop",
+    "stack": ["Next.js", "Medusa", "Stripe", "OASIS"],
+    "features": ["product-catalog", "cart", "checkout", "stripe", "quest-proof-discounts"]
+  }
+}

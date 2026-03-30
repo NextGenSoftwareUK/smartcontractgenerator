@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --union-black:   #0d0d0d;
+  --union-panel:   #141414;
+  --union-gold:    #c49937;
+  --union-gold-bright: #e2b84c;
+  --union-gold-dim: rgba(196, 153, 55, 0.18);
+  --union-red:     #9b1c1c;
+  --union-text:    #f2ede4;
+  --union-muted:   #7a6e65;
+  --union-border:  rgba(196, 153, 55, 0.22);
+}
+
+html {
+  color-scheme: dark;
+}
+
+@supports (font: -apple-system-body) and (-webkit-appearance: none) {
+  img[loading='lazy'] {
+    clip-path: inset(0.6px);
+  }
+}
+
+a,
+input,
+button {
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-union-gold focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--union-black); }
+::-webkit-scrollbar-thumb { background: var(--union-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--union-gold); }
+
+/* Selection */
+::selection {
+  background: var(--union-gold);
+  color: var(--union-black);
+}

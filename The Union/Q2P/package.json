@@ -1,0 +1,15 @@
+{
+  "name": "q2p",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Quest-to-Physical commerce - Etsy-style virtual shops",
+  "scripts": {
+    "dev:storefront": "cd storefront && pnpm dev",
+    "dev:medusa": "cd medusa && pnpm run dev",
+    "build:storefront": "cd storefront && pnpm build",
+    "build:medusa": "cd medusa && pnpm run build",
+    "seed:medusa": "cd medusa && pnpm run seed",
+    "install:all": "pnpm install && cd storefront && pnpm install && cd ../medusa && pnpm install"
+  },
+  "packageManager": "pnpm@9.0.0"
+}
