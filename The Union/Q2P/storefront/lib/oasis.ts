@@ -29,7 +29,7 @@ export function getOasisToken(): string | undefined {
   const envToken = process.env.NEXT_PUBLIC_OASIS_AVATAR_TOKEN;
   if (envToken) return envToken;
   const match = document.cookie.match(/oasis_token=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : undefined;
+  return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
 function parsePhysicalReward(raw: unknown): QuestProof['physicalReward'] | undefined {
